@@ -1,8 +1,9 @@
 import numpy as np
+import random
 
 # GENERACION DE PARAMETROS
-I = range(2)  # Conjunto de asignaturas (DEPENDE DEL TAMANIO DE LA INSTANCIA)
-S = range(3)  # Conjunto de salas
+I = range(25)  # Conjunto de asignaturas (DEPENDE DEL TAMANIO DE LA INSTANCIA)
+S = range(1)  # Conjunto de salas
 T = range(7)  # Bloques horarios disponibles por dia
 D = range(5)  # Dias de la semana, de lunes a viernes
 
@@ -12,8 +13,26 @@ A_i = {i: np.random.choice([0, 1], p=[0.8, 0.2]) for i in I}  # Asignatura indis
 P_i = {i: np.random.randint(6, 11) if A_i[i] == 1 else np.random.randint(1, 6) for i in I} #6-10 indispensable, 1-5 dispensable
 R_i = {i: np.random.choice([1, 2], p=[0.65, 0.35]) for i in I}  # i Requiere 1 o 2 bloques? (65% 1 bloque, 35% 2 bloques)(B=1)
 
-# Bloques bloqueados para profesores (LA DEFINIICION DE ESTE DICCIONARIO ESTA MALA, MODIFICAR)
-B_itd = {(i, t, d): np.random.choice([0, 1], p=[0.9, 0.1]) for i in I for t in T for d in D}
+# Bloques bloqueados para profesores
+B_itd = {}
+for i in I:
+    # Numero de bloques bloqueados que va a tener profesor de asignatura i
+    num_bloques_bloqueados = np.random.randint(7, 22)
+    
+    # En un inicio todos los bloques estan disponibles
+    for t in T:
+        for d in D:
+            B_itd[(i, t, d)] = 0
+    
+    # Combinaciones bloques-dia
+    combinaciones_t_d = [(t, d) for t in T for d in D]
+    
+    # Seleccionamos aleatoriamente las combinaciones bloque-dia bloqueadas
+    bloques_bloqueados = random.sample(combinaciones_t_d, num_bloques_bloqueados)
+    
+    # Asignamos los bloques bloqueados (B_itd = 1)
+    for (t, d) in bloques_bloqueados:
+        B_itd[(i, t, d)] = 1
 
 # Variables de decisión: si la asignatura i está asignada a la sala s, bloque t, día d
 variables = {(i, s, t, d): f'X_{i}_{s}_{t}_{d}' for i in I for s in S for t in T for d in D}
@@ -39,7 +58,7 @@ def generar_restricciones_solapamientos(variables):
     return restricciones
 
 # Restriccion 2: Asignacion de bloques requeridos por asignatura
-def generar_restricciones_asignacion_bloques_lp_solve(variables, requerimientos):
+def generar_restricciones_asignacion_bloques(variables, requerimientos):
     restricciones = ""
     for i in I:
         restriccion = ""
@@ -51,7 +70,7 @@ def generar_restricciones_asignacion_bloques_lp_solve(variables, requerimientos)
     return restricciones
 
 # Restriccion 3: Capacidad de la sala
-def generar_restricciones_capacidad_lp_solve(variables, E_i, C_s):
+def generar_restricciones_capacidad(variables, E_i, C_s):
     restricciones = ""
     for i in I:
         for s in S:
@@ -61,36 +80,37 @@ def generar_restricciones_capacidad_lp_solve(variables, E_i, C_s):
     return restricciones
 
 # Restriccion 4: Asignaturas indispensables deben asignarse
-def generar_restricciones_indispensables_lp_solve(variables, A_i):
+def generar_restricciones_indispensables(variables, A_i):
     restricciones = ""
     for i in I:
         if A_i[i] == 1:  # Si la asignatura es indispensable
             restriccion = " + ".join([variables[(i, s, t, d)] for s in S for t in T for d in D])
-            restricciones += f"{restriccion} >= 1;\n"
+            restricciones += f"{restriccion} >= 1;\n" # La asignatura i debe estar asignada almenos 1 vez
     return restricciones
 
 # Restriccion 5: Bloques bloqueados para los profesores
-def generar_restricciones_bloques_bloqueados_lp_solve(variables, B_itd):
+def generar_restricciones_bloques_bloqueados(variables, B_itd):
     restricciones = ""
     for i in I:
         for s in S:
             for t in T:
                 for d in D:
-                    if B_itd[(i, t, d)] == 1:
+                    if B_itd[(i, t, d)] == 1:   #Si B_itd == 1 => X_istd <= 0, es decir X_istd = 0
                         restricciones += f"{variables[(i, s, t, d)]} = 0;\n"
     return restricciones
 
-# Restriccion 6: Bloques consecutivos
-def generar_restricciones_bloques_consecutivos_lp_solve(variables, R_i):
+# Restriccion 6: Bloques consecutivos (ERROR)
+def generar_restricciones_bloques_consecutivos(variables, R_i):
     restricciones = ""
     for i in I:
         if R_i[i] == 2:  # Si la asignatura requiere 2 bloques consecutivos
             for s in S:
-                for t in range(len(T) - 1):  # Hasta el penultimo bloque (t)
-                    for d in D:
+                for d in D:  # Aseguramos que se apliquen solo dentro del mismo día
+                    for t in range(len(T) - 1):  # Hasta el penultimo bloque (t)
                         # Si se asigna al bloque t, también debe estar en el bloque t+1
                         restricciones += f"{variables[(i, s, t, d)]} - {variables[(i, s, t+1, d)]} = 0;\n"
     return restricciones
+
 
 # Declaracion de variables binarias
 def declarar_variables_binarias(variables):
@@ -103,11 +123,11 @@ objetivo = generar_funcion_objetivo(variables, P_i)
 
 # Generacion de restricciones
 restricciones_solapamientos = generar_restricciones_solapamientos(variables)
-restricciones_asignacion = generar_restricciones_asignacion_bloques_lp_solve(variables, R_i)
-restricciones_capacidad = generar_restricciones_capacidad_lp_solve(variables, E_i, C_s)
-restricciones_indispensables = generar_restricciones_indispensables_lp_solve(variables, A_i)
-restricciones_bloques_bloqueados = generar_restricciones_bloques_bloqueados_lp_solve(variables, B_itd)
-restricciones_bloques_consecutivos = generar_restricciones_bloques_consecutivos_lp_solve(variables, R_i)
+restricciones_asignacion = generar_restricciones_asignacion_bloques(variables, R_i)
+restricciones_capacidad = generar_restricciones_capacidad(variables, E_i, C_s)
+restricciones_indispensables = generar_restricciones_indispensables(variables, A_i)
+restricciones_bloques_bloqueados = generar_restricciones_bloques_bloqueados(variables, B_itd)
+restricciones_bloques_consecutivos = generar_restricciones_bloques_consecutivos(variables, R_i)
 
 # Declaracion de las variables binarias
 declaracion_binarias = declarar_variables_binarias(variables)
