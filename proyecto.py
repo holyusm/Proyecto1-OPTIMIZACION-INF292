@@ -105,12 +105,22 @@ def generar_restricciones_bloques_consecutivos(variables, R_i):
     for i in I:
         if R_i[i] == 2:  # Si la asignatura requiere 2 bloques consecutivos
             for s in S:
-                for d in D:  # Aseguramos que se apliquen solo dentro del mismo día
+                for d in D:  # Aseguramos que se apliquen solo dentro del mismo dia
                     for t in range(len(T) - 1):  # Hasta el penultimo bloque (t)
                         # Si se asigna al bloque t, también debe estar en el bloque t+1
                         restricciones += f"{variables[(i, s, t, d)]} - {variables[(i, s, t+1, d)]} = 0;\n"
     return restricciones
 
+# Restriccion 7: Exclusion del ultimo bloque del dia para asignaturas que requieren 2 bloques
+def generar_restricciones_exclusion_ultimo_bloque(variables, R_i):
+    restricciones = ""
+    for i in I:
+        if R_i[i] == 2:  # Si la asignatura requiere 2 bloques consecutivos
+            for s in S:
+                for d in D:
+                    # Bloquear la asignación del ultimo bloque del día
+                    restricciones += f"{variables[(i, s, len(T)-1, d)]} = 0;\n"
+    return restricciones
 
 # Declaracion de variables binarias
 def declarar_variables_binarias(variables):
@@ -128,12 +138,16 @@ restricciones_capacidad = generar_restricciones_capacidad(variables, E_i, C_s)
 restricciones_indispensables = generar_restricciones_indispensables(variables, A_i)
 restricciones_bloques_bloqueados = generar_restricciones_bloques_bloqueados(variables, B_itd)
 restricciones_bloques_consecutivos = generar_restricciones_bloques_consecutivos(variables, R_i)
+restricciones_exclusion_ultimo_bloque = generar_restricciones_exclusion_ultimo_bloque(variables, R_i) 
 
 # Declaracion de las variables binarias
 declaracion_binarias = declarar_variables_binarias(variables)
 
 # Generacion del modelo completo en formato lp_solve
-modelo_lp_solve = objetivo + restricciones_solapamientos + restricciones_asignacion + restricciones_capacidad + restricciones_indispensables + restricciones_bloques_bloqueados + declaracion_binarias
+modelo_lp_solve = (objetivo + "/* Restricciones: */\n" +restricciones_solapamientos + 
+                   restricciones_asignacion + restricciones_capacidad + 
+                   restricciones_indispensables + restricciones_bloques_bloqueados + 
+                   restricciones_exclusion_ultimo_bloque + declaracion_binarias)
 
 # Escribir el modelo en un archivo .lp
 with open('proyecto.lp', 'w') as file:
