@@ -2,8 +2,8 @@ import numpy as np
 import random
 
 # GENERACION DE PARAMETROS
-I = range(25)  # Conjunto de asignaturas (DEPENDE DEL TAMANIO DE LA INSTANCIA)
-S = range(1)  # Conjunto de salas
+I = range(30)  # Conjunto de asignaturas (DEPENDE DEL TAMANIO DE LA INSTANCIA)
+S = range(15)  # Conjunto de salas
 T = range(7)  # Bloques horarios disponibles por dia
 D = range(5)  # Dias de la semana, de lunes a viernes
 
@@ -34,18 +34,19 @@ for i in I:
     for (t, d) in bloques_bloqueados:
         B_itd[(i, t, d)] = 1
 
-# Variables de decisión: si la asignatura i está asignada a la sala s, bloque t, día d
-variables = {(i, s, t, d): f'X_{i}_{s}_{t}_{d}' for i in I for s in S for t in T for d in D}
+# Variables de decisión:
+# x_{i,s,t,d}: 1 si la asignatura i se asigna a la sala s en el bloque t del día d, 0 en caso contrario
+# y_i: 1 si la asignatura i es asignada, 0 en caso contrario
+variables_x = {(i, s, t, d): f'X_{i}_{s}_{t}_{d}' for i in I for s in S for t in T for d in D}
+variables_y = {i: f'Y{i}' for i in I}  # Nueva variable binaria para cada asignatura
 
 # Funcion objetivo
-def generar_funcion_objetivo(variables, prioridades):
+def generar_funcion_objetivo(variables_y, prioridades):
     funcion_objetivo = "max: "
     for i in I:
-        for s in S:
-            for t in T:
-                for d in D:
-                    funcion_objetivo += f"{prioridades[i]} * {variables[(i, s, t, d)]} + "
+        funcion_objetivo += f"{prioridades[i]} * {variables_y[i]} + "
     return funcion_objetivo.rstrip(" + ") + ";\n"
+
 
 # Restriccion 1: Evitar solapamientos en las salas
 def generar_restricciones_solapamientos(variables):
@@ -53,23 +54,41 @@ def generar_restricciones_solapamientos(variables):
     for s in S:
         for t in T:
             for d in D:
-                restriccion = " + ".join([variables[(i, s, t, d)] for i in I])
+                restriccion = ""
+                for i in I:
+                    restriccion += f"{variables[(i, s, t, d)]} + "
+                restriccion = restriccion.rstrip(" + ")  # Quita el último " + "
                 restricciones += f"{restriccion} <= 1;\n"
     return restricciones
 
-# Restriccion 2: Asignacion de bloques requeridos por asignatura
-def generar_restricciones_asignacion_bloques(variables, requerimientos):
+# Restriccion 2: Bloques consecutivos para asignaturas que requieren 2 bloques
+def generar_restricciones_bloques_consecutivos(variables_x, variables_y, R_i):
     restricciones = ""
     for i in I:
-        restriccion = ""
-        for s in S:
-            for t in T:
-                for d in D:
-                    restriccion += f"{variables[(i, s, t, d)]} + "
-        restricciones += f"{restriccion.rstrip(' + ')} = {requerimientos[i]};\n"
+        if R_i[i] == 2:  
+            for s in S:
+                for d in D: 
+                    for t in range(len(T) - 1):  # Hasta el penúltimo bloque
+                        restricciones += f"{variables_x[(i, s, t, d)]} - {variables_x[(i, s, t+1, d)]} <= {variables_y[i]};\n"
     return restricciones
 
-# Restriccion 3: Capacidad de la sala
+# Restriccion 3: Asignación consecutiva en el penúltimo y último bloque del día
+def generar_restricciones_exclusion_ultimo_bloque(variables_x, variables_y, R_i):
+    restricciones = ""
+    for i in I:
+        if R_i[i] == 2:  # Si la asignatura requiere 2 bloques consecutivos
+            for s in S:
+                for d in D:
+                    # Primera desigualdad: El último bloque solo puede estar asignado si el penúltimo también lo está
+                    restricciones += f"{variables_x[(i, s, len(T)-1, d)]} <= {variables_x[(i, s, len(T)-2, d)]};\n"
+                    # Segunda desigualdad: El último bloque solo puede estar asignado si la asignatura está asignada
+                    restricciones += f"{variables_x[(i, s, len(T)-1, d)]} <= {variables_y[i]};\n"
+                    # Tercera desigualdad: El penúltimo bloque solo puede estar asignado si la asignatura está asignada
+                    restricciones += f"{variables_x[(i, s, len(T)-2, d)]} <= {variables_y[i]};\n"
+    return restricciones
+
+
+# Restriccion 4: Capacidad de la sala
 def generar_restricciones_capacidad(variables, E_i, C_s):
     restricciones = ""
     for i in I:
@@ -79,75 +98,77 @@ def generar_restricciones_capacidad(variables, E_i, C_s):
                     restricciones += f"{E_i[i]} * {variables[(i, s, t, d)]} <= {C_s[s]};\n"
     return restricciones
 
-# Restriccion 4: Asignaturas indispensables deben asignarse
-def generar_restricciones_indispensables(variables, A_i):
+# Restriccion 5: Asignación Exacta de Bloques
+def generar_restricciones_asignacion_exacta(variables_x, variables_y, R_i):
     restricciones = ""
     for i in I:
-        if A_i[i] == 1:  # Si la asignatura es indispensable
-            restriccion = " + ".join([variables[(i, s, t, d)] for s in S for t in T for d in D])
-            restricciones += f"{restriccion} >= 1;\n" # La asignatura i debe estar asignada almenos 1 vez
+        restriccion = ""
+        for s in S:
+            for t in T:
+                for d in D:
+                    restriccion += f"{variables_x[(i, s, t, d)]} + "
+        # Remover el último " + " para agregar la igualdad
+        restriccion = restriccion.rstrip(" + ")
+        # Aplicar la igualdad en función de y_i y R_i
+        restricciones += f"{restriccion} = {R_i[i]} * {variables_y[i]};\n"
     return restricciones
 
-# Restriccion 5: Bloques bloqueados para los profesores
-def generar_restricciones_bloques_bloqueados(variables, B_itd):
+# Restriccion 6: Prioridad de Asignación según Importancia
+def generar_restricciones_prioridad_asignacion(variables_y, A_i):
+    restricciones = ""
+    for i in I:
+        restricciones += f"{variables_y[i]} >= {A_i[i]};\n"
+    return restricciones
+
+# Restriccion 7: Restricciones de horario de los profesores
+def generar_restricciones_horario_profesores(variables_x, B_itd):
     restricciones = ""
     for i in I:
         for s in S:
             for t in T:
                 for d in D:
-                    if B_itd[(i, t, d)] == 1:   #Si B_itd == 1 => X_istd <= 0, es decir X_istd = 0
-                        restricciones += f"{variables[(i, s, t, d)]} = 0;\n"
+                    # Si el bloque está bloqueado (B_itd = 1), x_istd <= 0, lo que impide la asignación
+                    restricciones += f"{variables_x[(i, s, t, d)]} <= {1 - B_itd[(i, t, d)]};\n"
     return restricciones
 
-# Restriccion 6: Bloques consecutivos (ERROR)
-def generar_restricciones_bloques_consecutivos(variables, R_i):
-    restricciones = ""
-    for i in I:
-        if R_i[i] == 2:  # Si la asignatura requiere 2 bloques consecutivos
-            for s in S:
-                for d in D:  # Aseguramos que se apliquen solo dentro del mismo dia
-                    for t in range(len(T) - 1):  # Hasta el penultimo bloque (t)
-                        # Si se asigna al bloque t, también debe estar en el bloque t+1
-                        restricciones += f"{variables[(i, s, t, d)]} - {variables[(i, s, t+1, d)]} = 0;\n"
-    return restricciones
-
-# Restriccion 7: Exclusion del ultimo bloque del dia para asignaturas que requieren 2 bloques
-def generar_restricciones_exclusion_ultimo_bloque(variables, R_i):
-    restricciones = ""
-    for i in I:
-        if R_i[i] == 2:  # Si la asignatura requiere 2 bloques consecutivos
-            for s in S:
-                for d in D:
-                    # Bloquear la asignación del ultimo bloque del día
-                    restricciones += f"{variables[(i, s, len(T)-1, d)]} = 0;\n"
-    return restricciones
-
-# Declaracion de variables binarias
-def declarar_variables_binarias(variables):
+def declarar_variables_binarias(variables_x, variables_y):
     binarios = "bin "
-    binarios += ", ".join(variables.values()) + ";\n"
+    binarios += ", ".join(variables_x.values()) + ", " + ", ".join(variables_y.values()) + ";\n"
     return binarios
 
 # Generación de la función objetivo
-objetivo = generar_funcion_objetivo(variables, P_i)
+objetivo = generar_funcion_objetivo(variables_y, P_i)
 
 # Generacion de restricciones
-restricciones_solapamientos = generar_restricciones_solapamientos(variables)
-restricciones_asignacion = generar_restricciones_asignacion_bloques(variables, R_i)
-restricciones_capacidad = generar_restricciones_capacidad(variables, E_i, C_s)
-restricciones_indispensables = generar_restricciones_indispensables(variables, A_i)
-restricciones_bloques_bloqueados = generar_restricciones_bloques_bloqueados(variables, B_itd)
-restricciones_bloques_consecutivos = generar_restricciones_bloques_consecutivos(variables, R_i)
-restricciones_exclusion_ultimo_bloque = generar_restricciones_exclusion_ultimo_bloque(variables, R_i) 
+restricciones_solapamientos = generar_restricciones_solapamientos(variables_x)  # Restricción 1
+restricciones_bloques_consecutivos = generar_restricciones_bloques_consecutivos(variables_x, variables_y, R_i)  # Restricción 2
+restricciones_exclusion_ultimo_bloque = generar_restricciones_exclusion_ultimo_bloque(variables_x, variables_y, R_i)  # Restricción 3
+restricciones_capacidad = generar_restricciones_capacidad(variables_x, E_i, C_s)  # Restricción 4
+restricciones_asignacion_exacta = generar_restricciones_asignacion_exacta(variables_x, variables_y, R_i)  # Restricción 5
+restricciones_prioridad_asignacion = generar_restricciones_prioridad_asignacion(variables_y, A_i)  # Restricción 6
+restricciones_horario_profesores = generar_restricciones_horario_profesores(variables_x, B_itd)  # Restricción 7
 
 # Declaracion de las variables binarias
-declaracion_binarias = declarar_variables_binarias(variables)
+declaracion_binarias = declarar_variables_binarias(variables_x, variables_y)
 
-# Generacion del modelo completo en formato lp_solve
-modelo_lp_solve = (objetivo + "/* Restricciones: */\n" +restricciones_solapamientos + 
-                   restricciones_asignacion + restricciones_capacidad + 
-                   restricciones_indispensables + restricciones_bloques_bloqueados + 
-                   restricciones_exclusion_ultimo_bloque + declaracion_binarias)
+# Generación del modelo completo en formato lp_solve
+modelo_lp_solve = (objetivo + "/* Restricciones: */\n" +
+                   "/* SOLAPAMIENTOS: */\n" +
+                   restricciones_solapamientos + 
+                   "/* BLOQUES CONSECUTIVOS: */\n" +
+                   restricciones_bloques_consecutivos +
+                   "/* EXCLUSION ULTIMO BLOQUE: */\n" +
+                   restricciones_exclusion_ultimo_bloque +
+                   "/* CAPACIDAD: */\n" +
+                   restricciones_capacidad +
+                   "/* ASIGNACION EXACTA: */\n" +
+                   restricciones_asignacion_exacta +  
+                   "/* PRIORIDAD ASIGNACION: */\n" +
+                   restricciones_prioridad_asignacion + 
+                   "/* HORARIO PROFESORES: */\n" +
+                   restricciones_horario_profesores +  
+                   "/* DECLARACION BINARIA: */\n" +
+                   declaracion_binarias)
 
 # Escribir el modelo en un archivo .lp
 with open('proyecto.lp', 'w') as file:
